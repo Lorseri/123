@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
@@ -32,6 +33,7 @@ import (
 	"github.com/milvus-io/milvus/internal/metastore"
 	"github.com/milvus-io/milvus/internal/metastore/model"
 	"github.com/milvus-io/milvus/internal/proto/indexpb"
+	"github.com/milvus-io/milvus/internal/proto/workerpb"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -690,7 +692,7 @@ func (m *indexMeta) UpdateVersion(buildID UniqueID) error {
 	return m.updateSegIndexMeta(segIdx, updateFunc)
 }
 
-func (m *indexMeta) FinishTask(taskInfo *indexpb.IndexTaskInfo) error {
+func (m *indexMeta) FinishTask(taskInfo *workerpb.IndexTaskInfo) error {
 	m.Lock()
 	defer m.Unlock()
 

@@ -30,6 +30,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/proto/indexcgopb"
 	"github.com/milvus-io/milvus/internal/proto/indexpb"
+	"github.com/milvus-io/milvus/internal/proto/workerpb"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/indexcgowrapper"
 	"github.com/milvus-io/milvus/pkg/common"
@@ -43,13 +44,15 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/timerecord"
 )
 
+var _ task = (*indexBuildTask)(nil)
+
 type indexBuildTaskV2 struct {
 	*indexBuildTask
 }
 
 func newIndexBuildTaskV2(ctx context.Context,
 	cancel context.CancelFunc,
-	req *indexpb.CreateJobRequest,
+	req *workerpb.CreateJobRequest,
 	node *IndexNode,
 ) *indexBuildTaskV2 {
 	t := &indexBuildTaskV2{
@@ -224,6 +227,8 @@ func (it *indexBuildTaskV2) PostExecute(ctx context.Context) error {
 	return nil
 }
 
+var _ task = (*indexBuildTask)(nil)
+
 // IndexBuildTask is used to record the information of the index tasks.
 type indexBuildTask struct {
 	ident  string
@@ -232,7 +237,7 @@ type indexBuildTask struct {
 
 	cm             storage.ChunkManager
 	index          indexcgowrapper.CodecIndex
-	req            *indexpb.CreateJobRequest
+	req            *workerpb.CreateJobRequest
 	newTypeParams  map[string]string
 	newIndexParams map[string]string
 	tr             *timerecord.TimeRecorder
@@ -242,7 +247,7 @@ type indexBuildTask struct {
 
 func newIndexBuildTask(ctx context.Context,
 	cancel context.CancelFunc,
-	req *indexpb.CreateJobRequest,
+	req *workerpb.CreateJobRequest,
 	cm storage.ChunkManager,
 	node *IndexNode,
 ) *indexBuildTask {
