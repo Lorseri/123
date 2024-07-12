@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/milvus-io/milvus/internal/proto/workerpb"
-
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -30,7 +28,9 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
+	"github.com/milvus-io/milvus/internal/datanode/io"
 	"github.com/milvus-io/milvus/internal/proto/indexpb"
+	"github.com/milvus-io/milvus/internal/proto/workerpb"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -403,7 +403,17 @@ func (i *IndexNode) CreateJobV2(ctx context.Context, req *workerpb.CreateJobV2Re
 			log.Warn("duplicated stats task", zap.Error(err))
 			return merr.Status(err), nil
 		}
-		t := newStatsTask(taskCtx, taskCancel, statsRequest, i)
+		cm, err := i.storageFactory.NewChunkManager(i.loopCtx, statsRequest.GetStorageConfig())
+		if err != nil {
+			log.Error("create chunk manager failed", zap.String("bucket", statsRequest.GetStorageConfig().GetBucketName()),
+				zap.String("accessKey", statsRequest.GetStorageConfig().GetAccessKeyID()),
+				zap.Error(err),
+			)
+			i.deleteStatsTaskInfos(ctx, []taskKey{{ClusterID: req.GetClusterID(), TaskID: req.GetTaskID()}})
+			return merr.Status(err), nil
+		}
+
+		t := newStatsTask(taskCtx, taskCancel, statsRequest, i, io.NewBinlogIO(cm))
 		ret := merr.Success()
 		if err := i.sched.TaskQueue.Enqueue(t); err != nil {
 			log.Warn("IndexNode failed to schedule", zap.Error(err))
@@ -502,7 +512,20 @@ func (i *IndexNode) QueryJobsV2(ctx context.Context, req *workerpb.QueryJobsV2Re
 		for _, taskID := range req.GetTaskIDs() {
 			info := i.getStatsTaskInfo(req.GetClusterID(), taskID)
 			if info != nil {
-				results = append(results, info.result)
+				results = append(results, &workerpb.StatsResult{
+					TaskID:         taskID,
+					State:          info.state,
+					FailReason:     info.failReason,
+					CollectionID:   info.collID,
+					PartitionID:    info.partID,
+					SegmentID:      info.segID,
+					Channel:        info.insertChannel,
+					InsertLogs:     info.insertLogs,
+					StatsLogs:      info.statsLogs,
+					DeltaLogs:      nil,
+					FieldStatsLogs: info.fieldStatsLogs,
+					NumRows:        info.numRows,
+				})
 			}
 		}
 		log.Debug("query stats job result success", zap.Any("results", results))
@@ -563,6 +586,19 @@ func (i *IndexNode) DropJobsV2(ctx context.Context, req *workerpb.DropJobsV2Requ
 			}
 		}
 		log.Info("drop analyze jobs success")
+		return merr.Success(), nil
+	case indexpb.JobType_JobTypeStatsJob:
+		keys := make([]taskKey, 0, len(req.GetTaskIDs()))
+		for _, taskID := range req.GetTaskIDs() {
+			keys = append(keys, taskKey{ClusterID: req.GetClusterID(), TaskID: taskID})
+		}
+		infos := i.deleteStatsTaskInfos(ctx, keys)
+		for _, info := range infos {
+			if info.cancel != nil {
+				info.cancel()
+			}
+		}
+		log.Info("drop stats jobs success")
 		return merr.Success(), nil
 	default:
 		log.Warn("IndexNode receive dropping unknown type jobs")

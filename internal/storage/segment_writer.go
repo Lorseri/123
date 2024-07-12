@@ -119,6 +119,10 @@ func (w *SegmentDeltaWriter) Finish() (*Blob, *TimeRange, error) {
 	return blob, w.GetTimeRange(), nil
 }
 
+func (w *SegmentDeltaWriter) GetDeltaData() *DeleteData {
+	return w.deleteData
+}
+
 type SegmentWriter struct {
 	writer  *SerializeWriter[*Value]
 	closers []func() (*Blob, error)
