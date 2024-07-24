@@ -3,6 +3,7 @@ package writebuffer
 import (
 	"context"
 	"fmt"
+
 	"sync"
 
 	"github.com/cockroachdb/errors"
@@ -16,7 +17,6 @@ import (
 	"github.com/milvus-io/milvus/internal/flushcommon/metacache"
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
-	"github.com/milvus-io/milvus/internal/querycoordv2/params"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -154,20 +154,11 @@ func newWriteBufferBase(channel string, metacache metacache.MetaCache, storageV2
 
 	var serializer syncmgr.Serializer
 	var err error
-	if params.Params.CommonCfg.EnableStorageV2.GetAsBool() {
-		serializer, err = syncmgr.NewStorageV2Serializer(
-			storageV2Cache,
-			option.idAllocator,
-			metacache,
-			option.metaWriter,
-		)
-	} else {
-		serializer, err = syncmgr.NewStorageSerializer(
-			option.idAllocator,
-			metacache,
-			option.metaWriter,
-		)
-	}
+	serializer, err = syncmgr.NewStorageSerializer(
+		option.idAllocator,
+		metacache,
+		option.metaWriter,
+	)
 	if err != nil {
 		return nil, err
 	}

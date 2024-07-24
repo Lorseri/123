@@ -911,15 +911,6 @@ func (s *taskSchedulerSuite) Test_scheduler() {
 		defer paramtable.Get().CommonCfg.EnableMaterializedView.SwapTempValue("false")
 		s.scheduler(handler)
 	})
-
-	s.Run("test scheduler with indexBuilderV2", func() {
-		paramtable.Get().CommonCfg.EnableStorageV2.SwapTempValue("true")
-		defer paramtable.Get().CommonCfg.EnableStorageV2.SwapTempValue("false")
-		paramtable.Get().CommonCfg.EnableMaterializedView.SwapTempValue("true")
-		defer paramtable.Get().CommonCfg.EnableMaterializedView.SwapTempValue("false")
-
-		s.scheduler(handler)
-	})
 }
 
 func (s *taskSchedulerSuite) Test_analyzeTaskFailCase() {
@@ -1291,8 +1282,6 @@ func (s *taskSchedulerSuite) Test_indexTaskFailCase() {
 		defer paramtable.Get().CommonCfg.EnableMaterializedView.SwapTempValue("False")
 		err := Params.Save("common.storage.scheme", "fake")
 		defer Params.Reset("common.storage.scheme")
-		Params.CommonCfg.EnableStorageV2.SwapTempValue("True")
-		defer Params.CommonCfg.EnableStorageV2.SwapTempValue("False")
 		scheduler.Start()
 
 		// get collection info failed --> init
