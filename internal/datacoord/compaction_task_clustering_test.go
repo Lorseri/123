@@ -117,7 +117,7 @@ func (s *CompactionTaskSuite) TestClusteringCompactionSegmentMetaChange() {
 		},
 	})
 
-	task.processFailedOrTimeout()
+	task.doClean()
 
 	seg12 := meta.GetSegment(101)
 	s.Equal(datapb.SegmentLevel_L1, seg12.Level)
