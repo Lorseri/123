@@ -430,11 +430,10 @@ SegmentGrowingImpl::LoadDeletedRecord(const LoadDeletedRecordInfo& info) {
 
 SpanBase
 SegmentGrowingImpl::chunk_data_impl(FieldId field_id, int64_t chunk_id) const {
-    auto vec = get_insert_record().get_data_base(field_id);
-    return vec->get_span_base(chunk_id);
+    return get_insert_record().get_span_base(field_id, chunk_id);
 }
 
-std::vector<std::string_view>
+std::pair<std::vector<std::string_view>, FixedVector<bool>>
 SegmentGrowingImpl::chunk_view_impl(FieldId field_id, int64_t chunk_id) const {
     PanicInfo(ErrorCode::NotImplemented,
               "chunk view impl not implement for growing segment");
@@ -622,6 +621,7 @@ SegmentGrowingImpl::bulk_subscript(FieldId field_id,
         }
         case DataType::ARRAY: {
             // element
+            std::cout << "lxg test" << std::endl;
             bulk_subscript_array_impl(*vec_ptr,
                                       seg_offsets,
                                       count,
@@ -773,6 +773,7 @@ SegmentGrowingImpl::bulk_subscript_array_impl(
     auto vec_ptr = dynamic_cast<const ConcurrentVector<Array>*>(&vec_raw);
     AssertInfo(vec_ptr, "Pointer of vec_raw is nullptr");
     auto& vec = *vec_ptr;
+    std::cout << "lxg" << std::endl;
     for (int64_t i = 0; i < count; ++i) {
         auto offset = seg_offsets[i];
         if (offset != INVALID_SEG_OFFSET) {
