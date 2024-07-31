@@ -937,6 +937,8 @@ func (t *alterCollectionTask) PreExecute(ctx context.Context) error {
 		return err
 	}
 
+	// todo: if field != "": check dataType / elementDataType, max_length > origin maxlength
+
 	t.CollectionID = collectionID
 	if hasMmapProp(t.Properties...) || hasLazyLoadProp(t.Properties...) {
 		loaded, err := isCollectionLoaded(ctx, t.queryCoord, t.CollectionID)
@@ -1009,7 +1011,7 @@ func (t *alterCollectionTask) PreExecute(ctx context.Context) error {
 
 func (t *alterCollectionTask) Execute(ctx context.Context) error {
 	var err error
-	t.result, err = t.rootCoord.AlterCollection(ctx, t.AlterCollectionRequest)
+	t.result, err = t.rootCoord.AlterCollectionOrField(ctx, t.AlterCollectionRequest)
 	return merr.CheckRPCCall(t.result, err)
 }
 
