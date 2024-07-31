@@ -932,18 +932,7 @@ func (s *LocalSegment) LoadMultiFieldData(ctx context.Context) error {
 
 	var status C.CStatus
 	GetLoadPool().Submit(func() (any, error) {
-		if paramtable.Get().CommonCfg.EnableStorageV2.GetAsBool() {
-			uri, err := typeutil_internal.GetStorageURI(paramtable.Get().CommonCfg.StorageScheme.GetValue(), paramtable.Get().CommonCfg.StoragePathPrefix.GetValue(), s.ID())
-			if err != nil {
-				return nil, err
-			}
-
-			loadFieldDataInfo.appendURI(uri)
-			loadFieldDataInfo.appendStorageVersion(s.space.GetCurrentVersion())
-			status = C.LoadFieldDataV2(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
-		} else {
-			status = C.LoadFieldData(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
-		}
+		status = C.LoadFieldData(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
 		return nil, nil
 	}).Await()
 	if err := HandleCStatus(ctx, &status, "LoadMultiFieldData failed",
@@ -1019,18 +1008,7 @@ func (s *LocalSegment) LoadFieldData(ctx context.Context, fieldID int64, rowCoun
 	var status C.CStatus
 	GetLoadPool().Submit(func() (any, error) {
 		log.Info("submitted loadFieldData task to load pool")
-		if paramtable.Get().CommonCfg.EnableStorageV2.GetAsBool() {
-			uri, err := typeutil_internal.GetStorageURI(paramtable.Get().CommonCfg.StorageScheme.GetValue(), paramtable.Get().CommonCfg.StoragePathPrefix.GetValue(), s.ID())
-			if err != nil {
-				return nil, err
-			}
-
-			loadFieldDataInfo.appendURI(uri)
-			loadFieldDataInfo.appendStorageVersion(s.space.GetCurrentVersion())
-			status = C.LoadFieldDataV2(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
-		} else {
-			status = C.LoadFieldData(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
-		}
+		status = C.LoadFieldData(s.ptr, loadFieldDataInfo.cLoadFieldDataInfo)
 		return nil, nil
 	}).Await()
 	if err := HandleCStatus(ctx, &status, "LoadFieldData failed",
@@ -1331,13 +1309,6 @@ func (s *LocalSegment) LoadIndex(ctx context.Context, indexInfo *querypb.FieldIn
 		IndexStoreVersion:  indexInfo.GetIndexStoreVersion(),
 	}
 
-	if paramtable.Get().CommonCfg.EnableStorageV2.GetAsBool() {
-		uri, err := typeutil_internal.GetStorageURI(paramtable.Get().CommonCfg.StorageScheme.GetValue(), paramtable.Get().CommonCfg.StoragePathPrefix.GetValue(), s.ID())
-		if err != nil {
-			return err
-		}
-		indexInfoProto.Uri = uri
-	}
 	newLoadIndexInfoSpan := tr.RecordSpan()
 
 	// 2.

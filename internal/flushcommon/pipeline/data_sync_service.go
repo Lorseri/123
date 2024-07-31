@@ -30,7 +30,6 @@ import (
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
 	"github.com/milvus-io/milvus/internal/flushcommon/writebuffer"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
-	"github.com/milvus-io/milvus/internal/querycoordv2/params"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/flowgraph"
 	"github.com/milvus-io/milvus/pkg/log"
@@ -152,11 +151,7 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 			future := io.GetOrCreateStatsPool().Submit(func() (any, error) {
 				var stats []*storage.PkStatistics
 				var err error
-				if params.Params.CommonCfg.EnableStorageV2.GetAsBool() {
-					stats, err = compaction.LoadStatsV2(storageV2Cache, segment, info.GetSchema())
-				} else {
-					stats, err = compaction.LoadStats(initCtx, chunkManager, info.GetSchema(), segment.GetID(), segment.GetStatslogs())
-				}
+				stats, err = compaction.LoadStats(initCtx, chunkManager, info.GetSchema(), segment.GetID(), segment.GetStatslogs())
 				if err != nil {
 					return nil, err
 				}
@@ -287,21 +282,13 @@ func NewDataSyncService(initCtx context.Context, pipelineParams *util.PipelinePa
 		return nil, err
 	}
 
-	var storageCache *metacache.StorageV2Cache
-	if params.Params.CommonCfg.EnableStorageV2.GetAsBool() {
-		storageCache, err = metacache.NewStorageV2Cache(info.Schema)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// init metaCache meta
-	metaCache, err := getMetaCacheWithTickler(initCtx, pipelineParams, info, tickler, unflushedSegmentInfos, flushedSegmentInfos, storageCache)
+	metaCache, err := getMetaCacheWithTickler(initCtx, pipelineParams, info, tickler, unflushedSegmentInfos, flushedSegmentInfos, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	return getServiceWithChannel(initCtx, pipelineParams, info, metaCache, storageCache, unflushedSegmentInfos, flushedSegmentInfos)
+	return getServiceWithChannel(initCtx, pipelineParams, info, metaCache, nil, unflushedSegmentInfos, flushedSegmentInfos)
 }
 
 func NewDataSyncServiceWithMetaCache(metaCache metacache.MetaCache) *DataSyncService {
