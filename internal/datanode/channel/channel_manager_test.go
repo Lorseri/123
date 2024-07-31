@@ -26,10 +26,11 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/milvus-io/milvus/internal/datanode/allocator"
-	"github.com/milvus-io/milvus/internal/datanode/broker"
 	"github.com/milvus-io/milvus/internal/datanode/util"
+	"github.com/milvus-io/milvus/internal/flushcommon/broker"
 	"github.com/milvus-io/milvus/internal/flushcommon/pipeline"
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
+	util2 "github.com/milvus-io/milvus/internal/flushcommon/util"
 	"github.com/milvus-io/milvus/internal/flushcommon/writebuffer"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/util/dependency"
@@ -43,10 +44,6 @@ import (
 
 func TestMain(t *testing.M) {
 	paramtable.Init()
-	err := util.InitGlobalRateCollector()
-	if err != nil {
-		panic("init test failed, err = " + err.Error())
-	}
 	code := t.Run()
 	os.Exit(code)
 }
@@ -74,10 +71,10 @@ func (s *OpRunnerSuite) SetupTest() {
 		Return(make(chan *msgstream.MsgPack), nil).Maybe()
 	dispClient.EXPECT().Deregister(mock.Anything).Maybe()
 
-	s.pipelineParams = &util.PipelineParams{
+	s.pipelineParams = &util2.PipelineParams{
 		Ctx:                context.TODO(),
 		Session:            &sessionutil.Session{SessionRaw: sessionutil.SessionRaw{ServerID: 0}},
-		CheckpointUpdater:  util.NewChannelCheckpointUpdater(mockedBroker),
+		CheckpointUpdater:  util2.NewChannelCheckpointUpdater(mockedBroker),
 		WriteBufferManager: wbManager,
 		Broker:             mockedBroker,
 		DispClient:         dispClient,
@@ -117,7 +114,7 @@ func (s *OpRunnerSuite) TestWatchTimeout() {
 	commuCh := make(chan *opState)
 
 	mockReleaseFunc := func(channel string) { log.Info("mock release func") }
-	mockWatchFunc := func(ctx context.Context, param *util.PipelineParams, info *datapb.ChannelWatchInfo, tickler *util.Tickler) (*pipeline.DataSyncService, error) {
+	mockWatchFunc := func(ctx context.Context, param *util2.PipelineParams, info *datapb.ChannelWatchInfo, tickler *util2.Tickler) (*pipeline.DataSyncService, error) {
 		<-ctx.Done()
 		sig <- struct{}{}
 		return nil, errors.New("timeout")
@@ -138,13 +135,13 @@ func (s *OpRunnerSuite) TestWatchTimeout() {
 
 type OpRunnerSuite struct {
 	suite.Suite
-	pipelineParams *util.PipelineParams
+	pipelineParams *util2.PipelineParams
 }
 
 type ChannelManagerSuite struct {
 	suite.Suite
 
-	pipelineParams *util.PipelineParams
+	pipelineParams *util2.PipelineParams
 	manager        *ChannelManagerImpl
 }
 
@@ -160,7 +157,7 @@ func (s *ChannelManagerSuite) SetupTest() {
 	mockedBroker := &broker.MockBroker{}
 	mockedBroker.EXPECT().GetSegmentInfo(mock.Anything, mock.Anything).Return([]*datapb.SegmentInfo{}, nil).Maybe()
 
-	s.pipelineParams = &util.PipelineParams{
+	s.pipelineParams = &util2.PipelineParams{
 		Ctx:                context.TODO(),
 		Session:            &sessionutil.Session{SessionRaw: sessionutil.SessionRaw{ServerID: 0}},
 		WriteBufferManager: wbManager,

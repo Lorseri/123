@@ -22,12 +22,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/milvus-io/milvus/internal/datanode/broker"
 	"github.com/milvus-io/milvus/internal/datanode/compaction"
-	"github.com/milvus-io/milvus/internal/datanode/io"
-	"github.com/milvus-io/milvus/internal/datanode/util"
+	"github.com/milvus-io/milvus/internal/flushcommon/broker"
+	"github.com/milvus-io/milvus/internal/flushcommon/io"
 	"github.com/milvus-io/milvus/internal/flushcommon/metacache"
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
+	"github.com/milvus-io/milvus/internal/flushcommon/util"
 	"github.com/milvus-io/milvus/internal/flushcommon/writebuffer"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/querycoordv2/params"
@@ -49,12 +49,12 @@ type DataSyncService struct {
 	cancelFn     context.CancelFunc
 	metacache    metacache.MetaCache
 	opID         int64
-	collectionID util.UniqueID // collection id of vchan for which this data sync service serves
+	collectionID typeutil.UniqueID // collection id of vchan for which this data sync service serves
 	vchannelName string
 
 	// TODO: should be equal to paramtable.GetNodeID(), but intergrationtest has 1 paramtable for a minicluster, the NodeID
 	// varies, will cause savebinglogpath check fail. So we pass ServerID into DataSyncService to aviod it failure.
-	serverID util.UniqueID
+	serverID typeutil.UniqueID
 
 	fg *flowgraph.TimeTickedFlowGraph // internal flowgraph processes insert/delta messages
 
@@ -72,10 +72,10 @@ type DataSyncService struct {
 
 type nodeConfig struct {
 	msFactory    msgstream.Factory // msgStream factory
-	collectionID util.UniqueID
+	collectionID typeutil.UniqueID
 	vChannelName string
 	metacache    metacache.MetaCache
-	serverID     util.UniqueID
+	serverID     typeutil.UniqueID
 }
 
 // Start the flow graph in dataSyncService
@@ -110,7 +110,9 @@ func (dsService *DataSyncService) close() {
 		)
 		if dsService.fg != nil {
 			log.Info("dataSyncService closing flowgraph")
-			dsService.dispClient.Deregister(dsService.vchannelName)
+			if dsService.dispClient != nil {
+				dsService.dispClient.Deregister(dsService.vchannelName)
+			}
 			dsService.fg.Close()
 			log.Info("dataSyncService flowgraph closed")
 		}
@@ -161,7 +163,9 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 					return nil, err
 				}
 				segmentPks.Insert(segment.GetID(), stats)
-				tickler.Inc()
+				if tickler != nil {
+					tickler.Inc()
+				}
 
 				return struct{}{}, nil
 			})
@@ -190,18 +194,25 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 	return metacache, nil
 }
 
-func getServiceWithChannel(initCtx context.Context, params *util.PipelineParams, info *datapb.ChannelWatchInfo, metacache metacache.MetaCache, storageV2Cache *metacache.StorageV2Cache, unflushed, flushed []*datapb.SegmentInfo) (*DataSyncService, error) {
+func getServiceWithChannel(initCtx context.Context, params *util.PipelineParams,
+	info *datapb.ChannelWatchInfo, metacache metacache.MetaCache, storageV2Cache *metacache.StorageV2Cache,
+	unflushed, flushed []*datapb.SegmentInfo, input <-chan *msgstream.MsgPack,
+) (*DataSyncService, error) {
 	var (
 		channelName  = info.GetVchan().GetChannelName()
 		collectionID = info.GetVchan().GetCollectionID()
 	)
+	serverID := paramtable.GetNodeID()
+	if params.Session != nil {
+		serverID = params.Session.ServerID
+	}
 
 	config := &nodeConfig{
 		msFactory:    params.MsgStreamFactory,
 		collectionID: collectionID,
 		vChannelName: channelName,
 		metacache:    metacache,
-		serverID:     params.Session.ServerID,
+		serverID:     serverID,
 	}
 
 	err := params.WriteBufferManager.Register(channelName, metacache, storageV2Cache,
@@ -241,7 +252,7 @@ func getServiceWithChannel(initCtx context.Context, params *util.PipelineParams,
 
 	// init flowgraph
 	fg := flowgraph.NewTimeTickedFlowGraph(params.Ctx)
-	dmStreamNode, err := newDmInputNode(initCtx, params.DispClient, info.GetVchan().GetSeekPosition(), config)
+	dmStreamNode, err := newDmInputNode(initCtx, params.DispClient, info.GetVchan().GetSeekPosition(), config, input)
 	if err != nil {
 		return nil, err
 	}
@@ -254,6 +265,7 @@ func getServiceWithChannel(initCtx context.Context, params *util.PipelineParams,
 		flushed,
 		unflushed,
 		params.CompactionExecutor,
+		params.FlushMsgHandler,
 	)
 	if err != nil {
 		return nil, err
@@ -301,7 +313,36 @@ func NewDataSyncService(initCtx context.Context, pipelineParams *util.PipelinePa
 		return nil, err
 	}
 
-	return getServiceWithChannel(initCtx, pipelineParams, info, metaCache, storageCache, unflushedSegmentInfos, flushedSegmentInfos)
+	return getServiceWithChannel(initCtx, pipelineParams, info, metaCache, storageCache, unflushedSegmentInfos, flushedSegmentInfos, nil)
+}
+
+func NewStreamingNodeDataSyncService(initCtx context.Context, pipelineParams *util.PipelineParams, info *datapb.ChannelWatchInfo, input <-chan *msgstream.MsgPack) (*DataSyncService, error) {
+	// recover segment checkpoints
+	var (
+		err                   error
+		unflushedSegmentInfos []*datapb.SegmentInfo
+		flushedSegmentInfos   []*datapb.SegmentInfo
+	)
+	if len(info.GetVchan().GetUnflushedSegmentIds()) > 0 {
+		unflushedSegmentInfos, err = pipelineParams.Broker.GetSegmentInfo(initCtx, info.GetVchan().GetUnflushedSegmentIds())
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(info.GetVchan().GetFlushedSegmentIds()) > 0 {
+		flushedSegmentInfos, err = pipelineParams.Broker.GetSegmentInfo(initCtx, info.GetVchan().GetFlushedSegmentIds())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// init metaCache meta
+	metaCache, err := initMetaCache(initCtx, nil, pipelineParams.ChunkManager, info, nil, unflushedSegmentInfos, flushedSegmentInfos)
+	if err != nil {
+		return nil, err
+	}
+
+	return getServiceWithChannel(initCtx, pipelineParams, info, metaCache, nil, unflushedSegmentInfos, flushedSegmentInfos, input)
 }
 
 func NewDataSyncServiceWithMetaCache(metaCache metacache.MetaCache) *DataSyncService {
