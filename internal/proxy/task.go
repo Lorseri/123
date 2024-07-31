@@ -37,6 +37,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
+	"github.com/milvus-io/milvus/pkg/util"
 	"github.com/milvus-io/milvus/pkg/util/commonpbutil"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
@@ -121,6 +122,7 @@ type task interface {
 	CanSkipAllocTimestamp() bool
 	SetOnEnqueueTime()
 	GetDurationInQueue() time.Duration
+	RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool
 }
 
 type baseTask struct {
@@ -137,6 +139,10 @@ func (bt *baseTask) SetOnEnqueueTime() {
 
 func (bt *baseTask) GetDurationInQueue() time.Duration {
 	return time.Since(bt.onEnqueueTime)
+}
+
+func (bt *baseTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	return false
 }
 
 type dmlTask interface {
@@ -406,6 +412,15 @@ func (t *createCollectionTask) PostExecute(ctx context.Context) error {
 	return nil
 }
 
+func (t *createCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
+}
+
 type dropCollectionTask struct {
 	baseTask
 	Condition
@@ -473,6 +488,15 @@ func (t *dropCollectionTask) Execute(ctx context.Context) error {
 
 func (t *dropCollectionTask) PostExecute(ctx context.Context) error {
 	return nil
+}
+
+func (t *dropCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type hasCollectionTask struct {
@@ -936,6 +960,9 @@ func (t *alterCollectionTask) PreExecute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collectionID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 
 	t.CollectionID = collectionID
 	if hasMmapProp(t.Properties...) || hasLazyLoadProp(t.Properties...) {
@@ -1017,6 +1044,15 @@ func (t *alterCollectionTask) PostExecute(ctx context.Context) error {
 	return nil
 }
 
+func (t *alterCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
+}
+
 type createPartitionTask struct {
 	baseTask
 	Condition
@@ -1085,7 +1121,13 @@ func (t *createPartitionTask) PreExecute(ctx context.Context) error {
 	if err := validatePartitionTag(partitionTag, true); err != nil {
 		return err
 	}
-
+	collID, err := globalMetaCache.GetCollectionID(ctx, t.GetDbName(), t.GetCollectionName())
+	if err != nil {
+		return err
+	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.GetCollectionName())
+	}
 	return nil
 }
 
@@ -1096,6 +1138,15 @@ func (t *createPartitionTask) Execute(ctx context.Context) (err error) {
 
 func (t *createPartitionTask) PostExecute(ctx context.Context) error {
 	return nil
+}
+
+func (t *createPartitionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type dropPartitionTask struct {
@@ -1172,6 +1223,9 @@ func (t *dropPartitionTask) PreExecute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.GetCollectionName())
+	}
 	partID, err := globalMetaCache.GetPartitionID(ctx, t.GetDbName(), t.GetCollectionName(), t.GetPartitionName())
 	if err != nil {
 		if errors.Is(merr.ErrPartitionNotFound, err) {
@@ -1204,6 +1258,15 @@ func (t *dropPartitionTask) Execute(ctx context.Context) (err error) {
 
 func (t *dropPartitionTask) PostExecute(ctx context.Context) error {
 	return nil
+}
+
+func (t *dropPartitionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type hasPartitionTask struct {
@@ -1606,6 +1669,9 @@ func (t *loadCollectionTask) Execute(ctx context.Context) (err error) {
 		return err
 	}
 
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 	t.collectionID = collID
 	collSchema, err := globalMetaCache.GetCollectionSchema(ctx, t.GetDbName(), t.CollectionName)
 	if err != nil {
@@ -1680,6 +1746,15 @@ func (t *loadCollectionTask) PostExecute(ctx context.Context) error {
 	return nil
 }
 
+func (t *loadCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
+}
+
 type releaseCollectionTask struct {
 	baseTask
 	Condition
@@ -1748,6 +1823,9 @@ func (t *releaseCollectionTask) Execute(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 	t.collectionID = collID
 	request := &querypb.ReleaseCollectionRequest{
 		Base: commonpbutil.UpdateMsgBase(
@@ -1770,6 +1848,15 @@ func (t *releaseCollectionTask) Execute(ctx context.Context) (err error) {
 func (t *releaseCollectionTask) PostExecute(ctx context.Context) error {
 	globalMetaCache.DeprecateShardCache(t.GetDbName(), t.CollectionName)
 	return nil
+}
+
+func (t *releaseCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type loadPartitionsTask struct {
@@ -1850,6 +1937,9 @@ func (t *loadPartitionsTask) Execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 	t.collectionID = collID
 	collSchema, err := globalMetaCache.GetCollectionSchema(ctx, t.GetDbName(), t.CollectionName)
 	if err != nil {
@@ -1920,6 +2010,15 @@ func (t *loadPartitionsTask) Execute(ctx context.Context) error {
 
 func (t *loadPartitionsTask) PostExecute(ctx context.Context) error {
 	return nil
+}
+
+func (t *loadPartitionsTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type releasePartitionsTask struct {
@@ -1999,6 +2098,9 @@ func (t *releasePartitionsTask) Execute(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 	t.collectionID = collID
 	for _, partitionName := range t.PartitionNames {
 		partitionID, err := globalMetaCache.GetPartitionID(ctx, t.GetDbName(), t.CollectionName, partitionName)
@@ -2027,6 +2129,15 @@ func (t *releasePartitionsTask) Execute(ctx context.Context) (err error) {
 func (t *releasePartitionsTask) PostExecute(ctx context.Context) error {
 	globalMetaCache.DeprecateShardCache(t.GetDbName(), t.CollectionName)
 	return nil
+}
+
+func (t *releasePartitionsTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
 
 type CreateResourceGroupTask struct {
@@ -2473,6 +2584,9 @@ func (t *TransferReplicaTask) Execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if globalMetaCache.IsCollectionTruncating(ctx, t.GetDbName(), collID) {
+		return fmt.Errorf("collection(%s.%s) is truncating", t.GetDbName(), t.CollectionName)
+	}
 	t.result, err = t.queryCoord.TransferReplica(ctx, &querypb.TransferReplicaRequest{
 		SourceResourceGroup: t.SourceResourceGroup,
 		TargetResourceGroup: t.TargetResourceGroup,
@@ -2548,4 +2662,83 @@ func (t *ListResourceGroupsTask) Execute(ctx context.Context) error {
 
 func (t *ListResourceGroupsTask) PostExecute(ctx context.Context) error {
 	return nil
+}
+
+type truncateCollectionTask struct {
+	baseTask
+	Condition
+	*milvuspb.DropCollectionRequest
+	ctx       context.Context
+	rootCoord types.RootCoordClient
+	result    *commonpb.Status
+	chMgr     channelsMgr
+	chTicker  channelsTimeTicker
+}
+
+func (t *truncateCollectionTask) TraceCtx() context.Context {
+	return t.ctx
+}
+
+func (t *truncateCollectionTask) ID() UniqueID {
+	return t.Base.MsgID
+}
+
+func (t *truncateCollectionTask) SetID(uid UniqueID) {
+	t.Base.MsgID = uid
+}
+
+func (t *truncateCollectionTask) Name() string {
+	return DropCollectionTaskName
+}
+
+func (t *truncateCollectionTask) Type() commonpb.MsgType {
+	return t.Base.MsgType
+}
+
+func (t *truncateCollectionTask) BeginTs() Timestamp {
+	return t.Base.Timestamp
+}
+
+func (t *truncateCollectionTask) EndTs() Timestamp {
+	return t.Base.Timestamp
+}
+
+func (t *truncateCollectionTask) SetTs(ts Timestamp) {
+	t.Base.Timestamp = ts
+}
+
+func (t *truncateCollectionTask) OnEnqueue() error {
+	if t.Base == nil {
+		t.Base = commonpbutil.NewMsgBase()
+	}
+	return nil
+}
+
+func (t *truncateCollectionTask) PreExecute(ctx context.Context) error {
+	t.Base.MsgType = commonpb.MsgType_DropCollection // todo commonpb.MsgType_TruncateCollection
+	t.Base.SourceID = paramtable.GetNodeID()
+
+	if err := validateCollectionName(t.CollectionName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *truncateCollectionTask) Execute(ctx context.Context) error {
+	var err error
+	t.result, err = t.rootCoord.TruncateCollection(ctx, t.DropCollectionRequest)
+	return err
+}
+
+func (t *truncateCollectionTask) PostExecute(ctx context.Context) error {
+	return nil
+}
+
+func (t *truncateCollectionTask) RelatedWithCollection(ctx context.Context, database string, collectionID typeutil.UniqueID) bool {
+	if util.IsSameDatabase(t.GetDbName(), database) {
+		if collectionID == globalMetaCache.GetCollectionIDByCache(ctx, t.GetDbName(), t.GetCollectionName()) {
+			return true
+		}
+	}
+	return false
 }
